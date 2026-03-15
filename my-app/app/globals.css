@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-surface: oklch(0.98 0.005 260);
+  --color-surface-elevated: oklch(1 0 0);
+  --color-border: oklch(0.9 0.01 260);
+  --color-primary: oklch(0.45 0.2 260);
+  --color-primary-hover: oklch(0.38 0.2 260);
+  --color-accent: oklch(0.65 0.18 160);
+  --color-muted: oklch(0.55 0.02 260);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-surface);
+  color: oklch(0.2 0.02 260);
+}
+
+/* Chat message bubbles */
+.chat-user {
+  background: var(--color-primary);
+  color: white;
+  border-radius: 1rem 1rem 0.25rem 1rem;
+}
+.chat-ai {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem 1rem 1rem 0.25rem;
+}
