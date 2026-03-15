@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+numpy
+opencv-python
+pypdf
+python-docx
+python-multipart
+requests
+pyttsx3
+ollama
+
