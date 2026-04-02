@@ -16,7 +16,8 @@ type StoredResumeMeta = {
 export const RESUME_STORAGE_KEY = "umamaj.resumeMeta";
 export const RESUME_ID_KEY = "umamaj.resumeId";
 
-function formatBytes(bytes: number) {
+function formatBytes(bytes?: number) {
+  if (bytes === undefined || isNaN(bytes)) return "Unknown size";
   const units = ["B", "KB", "MB", "GB"];
   let v = bytes;
   let i = 0;

@@ -136,7 +136,11 @@ export function ChatBox({ isSessionEnded = false }: ChatBoxProps) {
     fetch(`${BACKEND_URL}/api/interview/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resume_id: resumeId, role: "Software Engineer" }),
+      body: JSON.stringify({ 
+        resume_id: resumeId, 
+        role: localStorage.getItem("umamaj.selectedRole") || "Software Engineer",
+        job_id: localStorage.getItem("umamaj.selectedJobId") || ""
+      }),
     })
       .then(async (res) => {
         if (!res.ok) {

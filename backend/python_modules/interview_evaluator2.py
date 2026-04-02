@@ -26,10 +26,6 @@ import ollama
 # ---------------------------------------------------------------------------
 
 METRICS: dict[str, str] = {
-    "communication_clarity": (
-        "How clearly and concisely does the candidate express their ideas? "
-        "Consider vocabulary, sentence structure, and avoidance of filler words."
-    ),
     "technical_knowledge": (
         "How well does the candidate demonstrate relevant technical knowledge "
         "or domain expertise? Evaluate depth and accuracy of answers."
@@ -38,9 +34,9 @@ METRICS: dict[str, str] = {
         "How does the candidate approach problems or hypothetical scenarios? "
         "Look for structured thinking, creativity, and adaptability."
     ),
-    "self_awareness": (
-        "Does the candidate show realistic self-assessment, acknowledge weaknesses, "
-        "and reflect on past experiences with honesty?"
+    "communication_clarity": (
+        "How clearly and concisely does the candidate express their ideas? "
+        "Consider vocabulary, sentence structure, and avoidance of filler words."
     ),
     "cultural_and_teamwork_fit": (
         "Does the candidate demonstrate collaborative values, empathy, "
@@ -54,18 +50,16 @@ METRICS: dict[str, str] = {
         "Does the candidate structure answers logically (e.g. STAR method, "
         "clear intro/body/conclusion)? Are responses easy to follow?"
     ),
-    "listening_and_responsiveness": (
-        "Does the candidate directly answer the questions asked, or do they "
-        "deflect or go off-topic? Do follow-up answers build on the interviewer's cues?"
-    ),
+    
 }
 
 # Behavioral anchor rubric — concrete examples prevent score inflation in small LLMs.
 # Each band describes *observable evidence*, not vague quality labels.
 SCORE_RUBRIC = """
-SCORING SCALE (1–10). Match the candidate's ACTUAL evidence to the band below.
-Default to the LOWER band when evidence is partial or ambiguous.
+SCORING SCALE (0–10). Match the candidate's ACTUAL evidence to the band below.
+If evidence is partial or ambiguous, give the score as 0.
 
+  0   (No Data): The session ended prematurely, the transcript is extremely short, or the candidate provided zero information.
  1–2  (Failing): No evidence of the skill. Answers are absent, incoherent, or
        actively harmful (e.g. blames others, makes up facts, cannot answer at all).
  3–4  (Weak): Minimal evidence. Candidate attempts the topic but responses are
@@ -78,6 +72,7 @@ Default to the LOWER band when evidence is partial or ambiguous.
        insightful, and go beyond what is expected for the role.
 
 ANTI-INFLATION RULES — you MUST follow these:
+- If the transcript is extremely short or the candidate barely spoke, the score MUST be 0.
 - If no concrete example is given, the score CANNOT exceed 5.
 - If the answer is vague or a single sentence, the score CANNOT exceed 4.
 - A score of 7+ requires you to quote or paraphrase a specific line as evidence.
@@ -133,7 +128,7 @@ def build_metric_prompt(transcript: str, metric_name: str, description: str, rol
         f"{SCORE_RUBRIC}\n"
         f"TRANSCRIPT:\n{transcript}\n\n"
         f"Return ONLY this JSON (no markdown, no extra text):\n"
-        f'{{"score":<1-10>,"justification":"<quote evidence or state NONE>","strengths":["..."],"improvements":["..."]}}'
+        f'{{"score":<0-10>,"justification":"<quote evidence or state NONE>","strengths":["..."],"improvements":["..."]}}'
     )
 
 
@@ -167,6 +162,7 @@ def query_llama(prompt: str, model: str = "llama3") -> str:
     """Send a prompt to Ollama using system+user roles for stronger instruction adherence."""
     response = ollama.chat(
         model=model,
+        format="json",
         messages=[
             {"role": "system", "content": SYSTEM_INSTRUCTION},
             {"role": "user",   "content": prompt},
@@ -178,82 +174,14 @@ def query_llama(prompt: str, model: str = "llama3") -> str:
 
 def safe_parse_json(raw: str) -> dict:
     """
-    Extract and parse the first JSON object in the string.
-    Handles three common failure modes from small LLMs:
-      1. Markdown code fences wrapping the JSON
-      2. Trailing prose after the closing brace
-      3. Truncated output — missing the closing brace(s)
+    Extract and parse JSON. Since we now use Ollama's native JSON format (`format="json"`), 
+    the output is guaranteed to be valid JSON. 
     """
-    # Strip markdown code fences
-    if "```" in raw:
-        parts = raw.split("```")
-        raw = parts[1] if len(parts) > 1 else parts[0]
-        if raw.lstrip().startswith("json"):
-            raw = raw.lstrip()[4:]
-
-    # Locate the opening brace
-    start = raw.find("{")
-    if start == -1:
-        raise ValueError(f"No JSON object found in response:\n{raw}")
-
-    raw = raw[start:]
-
-    # Try parsing as-is first (happy path)
     try:
         return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Walk the string tracking brace depth to find the intended end
-    depth = 0
-    in_string = False
-    escape_next = False
-    end_idx = None
-
-    for i, ch in enumerate(raw):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                end_idx = i + 1
-                break
-
-    if end_idx:
-        try:
-            return json.loads(raw[:end_idx])
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: the model truncated the JSON — close any open braces/arrays
-    candidate = raw.rstrip()
-    # Close any unterminated string
-    quote_count = candidate.count('"') - candidate.count('\\"')
-    if quote_count % 2 != 0:
-        candidate += '"'
-    # Close open arrays and objects
-    open_braces   = candidate.count("{") - candidate.count("}")
-    open_brackets = candidate.count("[") - candidate.count("]")
-    # Ensure we don't have a trailing comma before we close
-    candidate = candidate.rstrip().rstrip(",")
-    candidate += "]" * open_brackets + "}" * open_braces
-
-    try:
-        return json.loads(candidate)
     except json.JSONDecodeError as e:
         raise ValueError(
-            f"Could not parse JSON even after repair.\nError: {e}\nRaw response:\n{raw}"
+            f"Could not parse JSON. Error: {e}\nRaw response:\n{raw}"
         )
 
 
@@ -266,22 +194,32 @@ def evaluate_transcript(
     role: str = "Unspecified Role",
     model: str = "llama3",
     verbose: bool = False,
+    job_description: str = "",
+    requirements: list = None,
 ) -> EvaluationReport:
     """
     Evaluate a transcript across all metrics and return an EvaluationReport.
 
     Each metric is assessed in an independent prompt to reduce anchoring bias.
     """
+    eval_metrics = dict(METRICS)
+    if requirements:
+        reqs_str = "\n".join(f"- {r}" for r in requirements)
+        eval_metrics["role_requirements_fit"] = (
+            f"How well did the candidate demonstrate the specific requirements: {reqs_str}? "
+            f"Did their technical answers satisfy the needs of the {job_description}?"
+        )
+
     metric_results: dict[str, MetricResult] = {}
     raw_scores: dict[str, dict] = {}
 
     print(f"\n📋 Evaluating transcript for: {role}")
     print(f"   Model : {model}")
-    print(f"   Metrics: {len(METRICS)}\n")
+    print(f"   Metrics: {len(eval_metrics)}\n")
 
-    for i, (metric_name, description) in enumerate(METRICS.items(), 1):
+    for i, (metric_name, description) in enumerate(eval_metrics.items(), 1):
         label = metric_name.replace("_", " ").title()
-        print(f"  [{i}/{len(METRICS)}] Scoring '{label}' ...", end=" ", flush=True)
+        print(f"  [{i}/{len(eval_metrics)}] Scoring '{label}' ...", end=" ", flush=True)
 
         prompt = build_metric_prompt(transcript, metric_name, description, role)
         raw = query_llama(prompt, model)

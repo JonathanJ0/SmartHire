@@ -27,7 +27,7 @@ from starlette.responses import Response
 
 def _load_interview_monitor_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "interview_monitor.py"
+    mod_path = here / "python_modules" / "interview_monitor.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find interview_monitor.py at {mod_path}")
 
@@ -44,7 +44,7 @@ interview_monitor = _load_interview_monitor_module()
 
 def _load_speech_monitor_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "speech_monitor2.py"
+    mod_path = here / "python_modules" / "speech_monitor2.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find speech_monitor2.py at {mod_path}")
 
@@ -61,7 +61,7 @@ speech_monitor = _load_speech_monitor_module()
 
 def _load_resume_to_json_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "resume_to_json.py"
+    mod_path = here / "python_modules" / "resume_to_json.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find resume_to_json.py at {mod_path}")
 
@@ -78,7 +78,7 @@ resume_to_json = _load_resume_to_json_module()
 
 def _load_interview_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "interview.py"
+    mod_path = here / "python_modules" / "interview.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find interview.py at {mod_path}")
 
@@ -95,7 +95,7 @@ interview = _load_interview_module()
 
 def _load_tts_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "tts.py"
+    mod_path = here / "python_modules" / "tts.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find tts.py at {mod_path}")
 
@@ -112,7 +112,7 @@ tts = _load_tts_module()
 
 def _load_interview_evaluator_module():
     here = Path(__file__).resolve().parent
-    mod_path = here / "venv" / "interview_evaluator2.py"
+    mod_path = here / "python_modules" / "interview_evaluator2.py"
     if not mod_path.exists():
         raise RuntimeError(f"Cannot find interview_evaluator2.py at {mod_path}")
 
@@ -191,6 +191,7 @@ class ResumeUploadResponse(BaseModel):
 class InterviewStartRequest(BaseModel):
     resume_id: str
     role: str = Field(default="Software Engineer")
+    job_id: str = Field(default="", description="Optional ID of the job posting to tailor the interview")
 
 
 class InterviewStartResponse(BaseModel):
@@ -217,6 +218,7 @@ class TtsRequest(BaseModel):
 
 class InterviewEndRequest(BaseModel):
     interview_session_id: str
+    monitor_session_id: Optional[str] = None
 
 
 app = FastAPI(title="UmaMaj Backend", version="0.1.0")
@@ -545,7 +547,27 @@ def start_interview(req: InterviewStartRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read resume JSON: {e}") from e
 
-    system_prompt = interview.build_system_prompt(resume, req.role)
+    job_description = ""
+    requirements = []
+    
+    # Load job details if job_id was provided
+    if req.job_id:
+        try:
+            # Reusing the existing list_jobs logic
+            for j in _read_jobs():
+                if j.get("id") == req.job_id:
+                    job_description = j.get("description", "")
+                    requirements = j.get("requirements", [])
+                    break
+        except Exception:
+            pass
+
+    system_prompt = interview.build_system_prompt(
+        resume=resume,
+        role=req.role,
+        job_description=job_description,
+        requirements=requirements
+    )
     messages = [{"role": "system", "content": system_prompt}]
 
     # same seed as `interview.py` to trigger the first interviewer question
@@ -561,6 +583,8 @@ def start_interview(req: InterviewStartRequest):
             "role": req.role,
             "messages": messages,
             "speech_events": [],
+            "job_description": job_description,
+            "requirements": requirements,
         }
 
     return InterviewStartResponse(
@@ -601,6 +625,29 @@ def interview_message(req: InterviewMessageRequest):
         assistant_message=assistant,
         is_concluded=concluded,
     )
+
+
+@app.post("/api/interview/end")
+def end_interview(req: InterviewEndRequest):
+    sess = None
+    with _lock:
+        sess = _interviews.get(req.interview_session_id)
+        
+    if not sess:
+        # Failsafe: if the interview never actually started on backend, just silently succeed
+        return {"status": "success", "note": "silently ignored"}
+        
+    # Link the monitor session
+    if req.monitor_session_id:
+        backend_root = Path(__file__).resolve().parent
+        data_dir = backend_root / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        link_path = data_dir / f"interview_monitor_link_{req.interview_session_id}.json"
+        link_path.write_text(json.dumps({"monitor_session_id": req.monitor_session_id}, indent=2), encoding="utf-8")
+        
+    # Force finalize the session (runs evaluator & compiles transcript)
+    _finalise_interview_session(req.interview_session_id)
+    return {"status": "success"}
 
 
 @app.post("/api/tts")
@@ -685,10 +732,17 @@ def _finalise_interview_session(session_id: str):
     try:
         evaluate_transcript = getattr(interview_evaluator, "evaluate_transcript", None)
         report_to_dict = getattr(interview_evaluator, "report_to_dict", None)
+        
+        # Read from _interviews session state instead of redefining
+        job_description = sess.get("job_description", "")
+        requirements = sess.get("requirements", [])
+        
         if evaluate_transcript and report_to_dict:
             eval_report = evaluate_transcript(
                 transcript=transcript_text,
                 role=role,
+                job_description=job_description,
+                requirements=requirements
             )
             eval_dict = report_to_dict(eval_report)
             eval_path = data_dir / f"interview_evaluation_{session_id}.json"
@@ -768,6 +822,7 @@ def list_interviews():
         recommendation = evaluation.get("recommendation")
 
         speech_stats = _safe_read_json(d / f"speech_stats_{session_id}.json") or {}
+        monitor_link = _safe_read_json(d / f"interview_monitor_link_{session_id}.json")
 
         rows.append(
             {
@@ -779,6 +834,7 @@ def list_interviews():
                 "recommendation": recommendation,
                 "hasEvaluation": bool(evaluation),
                 "hasSpeechStats": bool(speech_stats),
+                "hasMonitor": bool(monitor_link),
             }
         )
 
@@ -802,6 +858,13 @@ def get_interview(session_id: str):
     resume_json = _safe_read_json(d / f"resume_prep_{resume_id}.json") if resume_id else None
     evaluation = _safe_read_json(d / f"interview_evaluation_{session_id}.json")
     speech_stats = _safe_read_json(d / f"speech_stats_{session_id}.json")
+    
+    # Load monitor stats if linked
+    monitor_stats = None
+    monitor_link = _safe_read_json(d / f"interview_monitor_link_{session_id}.json")
+    if monitor_link and "monitor_session_id" in monitor_link:
+        monitor_session_id = monitor_link["monitor_session_id"]
+        monitor_stats = _safe_read_json(d / f"monitor_report_{monitor_session_id}.json")
 
     return {
         "id": session_id,
@@ -811,8 +874,79 @@ def get_interview(session_id: str):
         "transcriptText": transcript_text,
         "evaluation": evaluation,
         "speechStats": speech_stats,
+        "monitorStats": monitor_stats,
         "updatedAt": transcript_path.stat().st_mtime,
     }
+
+
+# ---------------------------------------------------------------------------
+# Job Postings
+# ---------------------------------------------------------------------------
+
+class CreateJobRequest(BaseModel):
+    title: str = Field(description="Job title, e.g. 'Software Engineer'")
+    department: str = Field(default="", description="Department, e.g. 'Engineering'")
+    location: str = Field(default="Remote", description="Location or 'Remote'")
+    job_type: str = Field(default="Full-time", description="Full-time / Part-time / Contract / Internship")
+    description: str = Field(default="", description="Full job description")
+    requirements: list[str] = Field(default_factory=list, description="List of requirement strings")
+
+
+def _jobs_path() -> Path:
+    return _data_dir() / "jobs.json"
+
+
+def _read_jobs() -> list[dict]:
+    path = _jobs_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_jobs(jobs: list[dict]) -> None:
+    _jobs_path().write_text(json.dumps(jobs, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    """Return all job postings."""
+    return {"items": _read_jobs()}
+
+
+@app.post("/api/jobs", status_code=201)
+def create_job(req: CreateJobRequest):
+    """Create a new job posting and persist it."""
+    job = {
+        "id": str(uuid.uuid4()),
+        "title": req.title.strip(),
+        "department": req.department.strip(),
+        "location": req.location.strip(),
+        "job_type": req.job_type.strip(),
+        "description": req.description.strip(),
+        "requirements": [r.strip() for r in req.requirements if r.strip()],
+        "created_at": __import__("time").time(),
+    }
+    with _lock:
+        jobs = _read_jobs()
+        jobs.insert(0, job)  # newest first
+        _write_jobs(jobs)
+    return job
+
+
+@app.delete("/api/jobs/{job_id}", status_code=200)
+def delete_job(job_id: str):
+    """Delete a job posting by id."""
+    with _lock:
+        jobs = _read_jobs()
+        updated = [j for j in jobs if j.get("id") != job_id]
+        if len(updated) == len(jobs):
+            raise HTTPException(status_code=404, detail="Job not found.")
+        _write_jobs(updated)
+    return {"ok": True}
 
 
 if __name__ == "__main__":

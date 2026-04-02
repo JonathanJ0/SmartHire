@@ -17,6 +17,14 @@ export function ResumeRequiredGate({ children }: Props) {
     const BACKEND_URL =
       process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://localhost:8000";
 
+    // 1. Check role is selected
+    const selectedRole = localStorage.getItem("umamaj.selectedRole");
+    if (!selectedRole) {
+      router.replace("/interviewee/jobs");
+      return;
+    }
+
+    // 2. Check resume is uploaded
     const resumeId = localStorage.getItem(RESUME_ID_KEY);
     if (!resumeId) {
       setHasResume(false);

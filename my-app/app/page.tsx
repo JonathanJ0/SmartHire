@@ -14,7 +14,7 @@ export default function HomePage() {
 
       <div className="mt-16 grid gap-8 sm:grid-cols-2">
         <Link
-          href="/interviewee"
+          href="/interviewee/jobs"
           className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-8 shadow-sm transition hover:border-[var(--color-primary)] hover:shadow-md"
         >
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-primary)]/10 text-[var(--color-primary)]">

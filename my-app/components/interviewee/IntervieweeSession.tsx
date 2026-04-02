@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ChatBox } from "./ChatBox";
-import { VideoCapture } from "./VideoCapture";
+import { VideoCapture, MONITOR_SESSION_KEY } from "./VideoCapture";
 import { INTERVIEW_SESSION_KEY } from "./ChatBox";
 
 export function IntervieweeSession() {
@@ -12,16 +12,19 @@ export function IntervieweeSession() {
 
   const handleEndSession = async () => {
     try {
-      const sessionId =
-        typeof window !== "undefined"
-          ? localStorage.getItem(INTERVIEW_SESSION_KEY)
-          : null;
-      if (sessionId) {
-        void fetch(`${BACKEND_URL}/api/interview/end`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ interview_session_id: sessionId }),
-        });
+      if (typeof window !== "undefined") {
+        const sessionId = localStorage.getItem(INTERVIEW_SESSION_KEY);
+        const monitorId = localStorage.getItem(MONITOR_SESSION_KEY);
+        if (sessionId) {
+          void fetch(`${BACKEND_URL}/api/interview/end`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              interview_session_id: sessionId,
+              monitor_session_id: monitorId 
+            }),
+          });
+        }
       }
     } catch {
       // Best-effort; still navigate to feedback.

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
+import { RoleBasedNav } from "@/components/RoleBasedNav";
 
 export const metadata: Metadata = {
   title: "UmaMaj – Interview Evaluation",
@@ -24,23 +26,10 @@ export default function RootLayout({
       <body className="antialiased min-h-screen">
         <header className="border-b border-[var(--color-border)] bg-[var(--color-surface-elevated)]">
           <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
-            <a href="/" className="font-semibold text-lg text-[var(--color-primary)]">
-              IES
-            </a>
-            <div className="flex gap-4">
-              <a
-                href="/interviewee"
-                className="text-sm text-[var(--color-muted)] hover:text-[var(--color-primary)]"
-              >
-                Interviewee
-              </a>
-              <a
-                href="/interviewer"
-                className="text-sm text-[var(--color-muted)] hover:text-[var(--color-primary)]"
-              >
-                Interviewer
-              </a>
-            </div>
+            <Link href="/" className="font-semibold text-lg text-[var(--color-primary)]">
+              SmartHire
+            </Link>
+            <RoleBasedNav />
           </nav>
         </header>
         <main>{children}</main>

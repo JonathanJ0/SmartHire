@@ -6,6 +6,8 @@ type VideoCaptureProps = {
   autoStart?: boolean;
 };
 
+export const MONITOR_SESSION_KEY = "umamaj.monitor.session_id";
+
 export function VideoCapture({ autoStart = false }: VideoCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -61,6 +63,9 @@ export function VideoCapture({ autoStart = false }: VideoCaptureProps) {
     }
     const sessionId = monitorSessionIdRef.current;
     monitorSessionIdRef.current = null;
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(MONITOR_SESSION_KEY);
+    }
     if (!sessionId) return;
 
     try {
@@ -94,6 +99,9 @@ export function VideoCapture({ autoStart = false }: VideoCaptureProps) {
       }
       const startData = (await res.json()) as { session_id: string };
       monitorSessionIdRef.current = startData.session_id;
+      if (typeof window !== "undefined") {
+        localStorage.setItem(MONITOR_SESSION_KEY, startData.session_id);
+      }
       setMonitorStatus({
         connected: true,
         alertsCount: 0,
