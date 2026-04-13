@@ -10,6 +10,7 @@ type Bundle = {
   resume: any;
   transcriptText: string;
   evaluation: any | null;
+  codingEvaluation: any | null;
   speechStats: any | null;
   monitorStats: any | null;
   updatedAt: number;
@@ -164,6 +165,54 @@ export function SessionDetailClient({ sessionId }: { sessionId: string }) {
               )}
             </div>
           </div>
+
+          {/* Coding Exercise Evaluation */}
+          {data.codingEvaluation && (
+            <div className="mt-8">
+              <h2 className="text-xl font-bold text-[var(--color-primary)]">
+                Coding Exercise Evaluation
+              </h2>
+              <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-6 shadow-sm grid gap-4 sm:grid-cols-3">
+                <div className="sm:col-span-1">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-2">
+                    Score & Verdict
+                  </h3>
+                  <p className="text-3xl font-bold text-[var(--color-accent)]">
+                    {data.codingEvaluation.score ?? "—"}/10
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">
+                    {data.codingEvaluation.verdict}
+                  </p>
+                </div>
+                <div className="sm:col-span-2 space-y-2 text-sm text-[var(--color-muted)]">
+                  <p>
+                    <span className="font-semibold">Correctness:</span>{" "}
+                    {data.codingEvaluation.correctness}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Complexity:</span>{" "}
+                    {data.codingEvaluation.complexity}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Edge cases:</span>{" "}
+                    {data.codingEvaluation.edge_cases}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Code quality:</span>{" "}
+                    {data.codingEvaluation.code_quality}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Explanation:</span>{" "}
+                    {data.codingEvaluation.explanation}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Feedback:</span>{" "}
+                    {data.codingEvaluation.feedback}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Deep Evaluation Report */}
           {data.evaluation && (

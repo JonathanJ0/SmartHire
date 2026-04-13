@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 import textwrap
+import re
 from dataclasses import dataclass, field, asdict
 import ollama
 
@@ -87,6 +88,11 @@ SYSTEM_INSTRUCTION = (
     "Inflated scores are a failure of your duty. "
     "You output only valid JSON. No prose, no markdown, no preamble."
 )
+
+# Hard safety rails applied in code (not just prompt text) so sparse interviews
+# cannot receive inflated scores when the model is over-generous.
+MIN_CANDIDATE_WORDS_FOR_SCORING = 35
+MIN_CANDIDATE_TURNS_FOR_SCORING = 2
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -185,6 +191,26 @@ def safe_parse_json(raw: str) -> dict:
         )
 
 
+def _extract_candidate_text(transcript: str) -> str:
+    """
+    Extract candidate utterances from transcript blocks like:
+      [CANDIDATE]
+      ...text...
+    """
+    parts = re.findall(r"\[CANDIDATE\]\s*(.*?)(?=\n\[[A-Z_]+\]|\Z)", transcript, flags=re.S)
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return "\n".join(cleaned)
+
+
+def _candidate_evidence_stats(transcript: str) -> tuple[int, int]:
+    candidate_text = _extract_candidate_text(transcript)
+    if not candidate_text:
+        return 0, 0
+    words = len(re.findall(r"\b\w+\b", candidate_text))
+    turns = len(re.findall(r"\[CANDIDATE\]\s*\S", transcript))
+    return words, turns
+
+
 # ---------------------------------------------------------------------------
 # Core evaluator
 # ---------------------------------------------------------------------------
@@ -208,6 +234,43 @@ def evaluate_transcript(
         eval_metrics["role_requirements_fit"] = (
             f"How well did the candidate demonstrate the specific requirements: {reqs_str}? "
             f"Did their technical answers satisfy the needs of the {job_description}?"
+        )
+
+    candidate_words, candidate_turns = _candidate_evidence_stats(transcript)
+    sparse_evidence = (
+        candidate_words < MIN_CANDIDATE_WORDS_FOR_SCORING
+        or candidate_turns < MIN_CANDIDATE_TURNS_FOR_SCORING
+    )
+
+    # If there is too little candidate evidence, bypass LLM scoring entirely.
+    if sparse_evidence:
+        metrics = {
+            metric_name: MetricResult(
+                score=0.0,
+                justification=(
+                    "Insufficient candidate evidence in transcript to score this metric "
+                    f"({candidate_words} words across {candidate_turns} candidate turn(s))."
+                ),
+                strengths=[],
+                improvements=[
+                    "Provide fuller responses with concrete examples.",
+                    "Answer more interview questions before ending the session.",
+                ],
+            )
+            for metric_name in eval_metrics.keys()
+        }
+        summary = (
+            "The interview transcript contains too little candidate evidence to evaluate fairly. "
+            "Scores are set to 0 to avoid inflated results from sparse responses."
+        )
+        return EvaluationReport(
+            role=role,
+            overall_score=0.0,
+            recommendation="No Hire",
+            summary=summary,
+            metrics=metrics,
+            red_flags=["Insufficient candidate participation."],
+            notable_positives=[],
         )
 
     metric_results: dict[str, MetricResult] = {}

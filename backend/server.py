@@ -127,6 +127,23 @@ def _load_interview_evaluator_module():
 interview_evaluator = _load_interview_evaluator_module()
 
 
+def _load_code_evaluation_module():
+    here = Path(__file__).resolve().parent
+    mod_path = here / "python_modules" / "code_evaluation.py"
+    if not mod_path.exists():
+        raise RuntimeError(f"Cannot find code_evaluation.py at {mod_path}")
+
+    spec = spec_from_file_location("code_evaluation", str(mod_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Failed to create module spec for code_evaluation.py")
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    return mod
+
+
+code_evaluation = _load_code_evaluation_module()
+
+
 class StartSessionRequest(BaseModel):
     candidate_name: str = Field(default="Candidate")
 
@@ -219,6 +236,36 @@ class TtsRequest(BaseModel):
 class InterviewEndRequest(BaseModel):
     interview_session_id: str
     monitor_session_id: Optional[str] = None
+
+
+class CodingQuestionRequest(BaseModel):
+    interview_session_id: str
+
+
+class CodingQuestionResponse(BaseModel):
+    title: str
+    description: str
+    examples: list[str]
+    constraints: list[str]
+
+
+class CodingSubmitRequest(BaseModel):
+    interview_session_id: str
+    language: str
+    code: str
+    explanation: str
+    question: Optional[Dict[str, Any]] = None
+
+
+class CodingEvaluationResponse(BaseModel):
+    score: float
+    verdict: str
+    correctness: str
+    complexity: str
+    edge_cases: str
+    code_quality: str
+    explanation: str
+    feedback: str
 
 
 app = FastAPI(title="UmaMaj Backend", version="0.1.0")
@@ -691,6 +738,109 @@ def tts_audio(req: TtsRequest):
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}") from e
 
 
+@app.post("/api/coding/question", response_model=CodingQuestionResponse)
+async def coding_question(req: CodingQuestionRequest):
+    """
+    Generate a DSA coding question for the given interview_session_id using
+    the existing `code_evaluation.py` logic and persist it for later grading.
+    """
+    raw = await code_evaluation.call_ollama(
+        code_evaluation.QUESTION_PROMPT, temperature=0.9
+    )
+    question = code_evaluation.parse_question(raw)
+
+    d = _data_dir()
+    q_path = d / f"coding_question_{req.interview_session_id}.json"
+    q_path.write_text(json.dumps(question, indent=2), encoding="utf-8")
+
+    return CodingQuestionResponse(
+        title=question.get("title", ""),
+        description=question.get("description", ""),
+        examples=list(question.get("examples", [])),
+        constraints=list(question.get("constraints", [])),
+    )
+
+
+@app.post("/api/coding/submit", response_model=CodingEvaluationResponse)
+async def submit_coding(req: CodingSubmitRequest):
+    """
+    Evaluate a candidate's coding exercise answer using `code_evaluation.py`
+    and store the result so it appears in the interviewer dashboard.
+    """
+    d = _data_dir()
+    q_path = d / f"coding_question_{req.interview_session_id}.json"
+    question: Dict[str, Any]
+    if q_path.exists():
+        try:
+            question = json.loads(q_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read coding question: {e}") from e
+    elif isinstance(req.question, dict) and req.question:
+        # Fallback for cases where the session changes between question fetch and submit.
+        question = req.question
+        q_path.write_text(json.dumps(question, indent=2), encoding="utf-8")
+    else:
+        raise HTTPException(status_code=404, detail="Coding question not found for session.")
+
+    problem_text = (
+        f"Title: {question.get('title','')}\n"
+        f"{question.get('description','')}\n"
+        + "\n".join(question.get("examples", []))
+    )
+
+    weighting: str
+    code = (req.code or "").strip()
+    explanation = (req.explanation or "").strip()
+    if code and not explanation:
+        weighting = "No explanation provided. Focus on code correctness and quality."
+    elif explanation and not code:
+        weighting = "No code submitted. Evaluate conceptual understanding only. Maximum score is 6."
+    else:
+        weighting = "Both code and explanation provided. Evaluate both equally."
+
+    prompt = code_evaluation.EVAL_PROMPT.format(
+        problem=problem_text,
+        language=req.language or "Python",
+        code=code or "(none)",
+        explanation=explanation or "(none)",
+        weighting=weighting,
+    )
+
+    raw = await code_evaluation.call_ollama(prompt, temperature=0.2)
+    parsed = code_evaluation.parse_result(raw)
+
+    # Persist coding evaluation alongside other interview artefacts.
+    eval_path = d / f"coding_evaluation_{req.interview_session_id}.json"
+    eval_path.write_text(json.dumps(parsed, indent=2), encoding="utf-8")
+
+    # Also attach a lightweight reference inside the main interview evaluation bundle if present.
+    main_eval_path = d / f"interview_evaluation_{req.interview_session_id}.json"
+    if main_eval_path.exists():
+        try:
+            main_eval = json.loads(main_eval_path.read_text(encoding="utf-8"))
+            main_eval["coding_evaluation"] = parsed
+            main_eval_path.write_text(json.dumps(main_eval, indent=2), encoding="utf-8")
+        except Exception:
+            # Best-effort; do not fail the request if this linking fails.
+            pass
+
+    try:
+        score_val = float(parsed.get("score", 0) or 0)
+    except (TypeError, ValueError):
+        score_val = 0.0
+
+    return CodingEvaluationResponse(
+        score=score_val,
+        verdict=parsed.get("verdict", ""),
+        correctness=parsed.get("correctness", ""),
+        complexity=parsed.get("complexity", ""),
+        edge_cases=parsed.get("edge_cases", ""),
+        code_quality=parsed.get("code_quality", ""),
+        explanation=parsed.get("explanation", ""),
+        feedback=parsed.get("feedback", ""),
+    )
+
+
 def _finalise_interview_session(session_id: str):
     with _lock:
         sess = _interviews.get(session_id)
@@ -818,8 +968,14 @@ def list_interviews():
                     candidate_name = str(contact.get("name") or "")
 
         evaluation = _safe_read_json(d / f"interview_evaluation_{session_id}.json") or {}
+        coding_eval = _safe_read_json(d / f"coding_evaluation_{session_id}.json") or {}
         overall_score = evaluation.get("overall_score")  # typically 1-10
         recommendation = evaluation.get("recommendation")
+        coding_score_raw = coding_eval.get("score")
+        try:
+            coding_score = float(coding_score_raw) if coding_score_raw is not None else None
+        except (TypeError, ValueError):
+            coding_score = None
 
         speech_stats = _safe_read_json(d / f"speech_stats_{session_id}.json") or {}
         monitor_link = _safe_read_json(d / f"interview_monitor_link_{session_id}.json")
@@ -833,6 +989,8 @@ def list_interviews():
                 "overallScore": overall_score,
                 "recommendation": recommendation,
                 "hasEvaluation": bool(evaluation),
+                "codingScore": coding_score,
+                "hasCodingEvaluation": bool(coding_eval),
                 "hasSpeechStats": bool(speech_stats),
                 "hasMonitor": bool(monitor_link),
             }
@@ -857,6 +1015,7 @@ def get_interview(session_id: str):
 
     resume_json = _safe_read_json(d / f"resume_prep_{resume_id}.json") if resume_id else None
     evaluation = _safe_read_json(d / f"interview_evaluation_{session_id}.json")
+    coding_evaluation = _safe_read_json(d / f"coding_evaluation_{session_id}.json")
     speech_stats = _safe_read_json(d / f"speech_stats_{session_id}.json")
     
     # Load monitor stats if linked
@@ -873,6 +1032,7 @@ def get_interview(session_id: str):
         "resume": resume_json,
         "transcriptText": transcript_text,
         "evaluation": evaluation,
+        "codingEvaluation": coding_evaluation,
         "speechStats": speech_stats,
         "monitorStats": monitor_stats,
         "updatedAt": transcript_path.stat().st_mtime,

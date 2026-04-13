@@ -5,6 +5,8 @@ import { ChatBox } from "./ChatBox";
 import { VideoCapture, MONITOR_SESSION_KEY } from "./VideoCapture";
 import { INTERVIEW_SESSION_KEY } from "./ChatBox";
 
+export const CODING_SESSION_KEY = "umamaj.codingSessionId";
+
 export function IntervieweeSession() {
   const router = useRouter();
   const BACKEND_URL =
@@ -16,20 +18,21 @@ export function IntervieweeSession() {
         const sessionId = localStorage.getItem(INTERVIEW_SESSION_KEY);
         const monitorId = localStorage.getItem(MONITOR_SESSION_KEY);
         if (sessionId) {
+          localStorage.setItem(CODING_SESSION_KEY, sessionId);
           void fetch(`${BACKEND_URL}/api/interview/end`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
               interview_session_id: sessionId,
-              monitor_session_id: monitorId 
+              monitor_session_id: monitorId,
             }),
           });
         }
       }
     } catch {
-      // Best-effort; still navigate to feedback.
+      // Best-effort; still navigate to coding panel.
     } finally {
-      router.push("/interviewee/feedback");
+      router.push("/interviewee/coding");
     }
   };
 
@@ -53,7 +56,7 @@ export function IntervieweeSession() {
             onClick={() => void handleEndSession()}
             className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
           >
-            End session &amp; view feedback
+            End session &amp; move to coding
           </button>
         </div>
       </div>

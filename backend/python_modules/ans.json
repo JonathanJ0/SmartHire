@@ -1,0 +1,6 @@
+{
+  "language": "Python",
+  "code": "class ListNode:\n    def **init**(self, val=0, next=None):\n        self.val = val\n        self.next = next\n\n\ndef reverseList(head):\n    prev = None\n    curr = head\n    \n    while curr:\n        next_node = curr.next\n        curr.next = prev\n        prev = curr\n        curr = next_node\n    \n    return prev",
+  "explanation": "I use an iterative approach with three pointers: prev, curr, and next_node. For each node, I reverse its next pointer to point to the previous node, then move all pointers one step forward. At the end, prev becomes the new head of the reversed list. This runs in O(n) time and uses O(1) space."
+  }
+  

@@ -23,7 +23,7 @@ export function ChatBox({ isSessionEnded = false }: ChatBoxProps) {
       id: "welcome",
       role: "ai",
       content:
-        "Hi! I’m your AI interviewer. When you’re ready, tell me a bit about yourself and we’ll start the session.",
+        "Interview Session",
       timestamp: new Date(),
     },
   ]);
@@ -38,6 +38,7 @@ export function ChatBox({ isSessionEnded = false }: ChatBoxProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastObjectUrlRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const startRequestInFlightRef = useRef(false);
 
   const BACKEND_URL =
     process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://localhost:8000";
@@ -126,10 +127,12 @@ export function ChatBox({ isSessionEnded = false }: ChatBoxProps) {
     if (typeof window === "undefined") return;
     if (isSessionEnded) return;
     if (interviewSessionId) return;
+    if (startRequestInFlightRef.current) return;
 
     const resumeId = localStorage.getItem(RESUME_ID_KEY);
     if (!resumeId) return;
 
+    startRequestInFlightRef.current = true;
     setInterviewError(null);
     setIsLoading(true);
 
@@ -179,6 +182,7 @@ export function ChatBox({ isSessionEnded = false }: ChatBoxProps) {
         setInterviewError(e instanceof Error ? e.message : "Failed to start interview.");
       })
       .finally(() => {
+        startRequestInFlightRef.current = false;
         setIsLoading(false);
         scrollToBottom();
       });

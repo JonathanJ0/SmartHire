@@ -11,6 +11,8 @@ type DashboardRow = {
   overallScore: number | null;
   recommendation?: string | null;
   hasEvaluation: boolean;
+  codingScore?: number | null;
+  hasCodingEvaluation?: boolean;
   hasSpeechStats: boolean;
   hasMonitor: boolean;
 };
@@ -158,6 +160,7 @@ export function CandidateTableClient() {
                 <th className="px-4 py-3 font-medium">Role</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 font-medium">Eval</th>
+                <th className="px-4 py-3 font-medium">Coding Eval</th>
                 <th className="px-4 py-3 font-medium">Speech</th>
                 <th className="px-4 py-3 font-medium">Monitor</th>
                 <th className="px-4 py-3 font-medium">Score</th>
@@ -189,6 +192,9 @@ export function CandidateTableClient() {
                     </td>
                     <td className="px-4 py-3">
                       {row.hasEvaluation ? "Yes" : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {row.hasCodingEvaluation ? "Yes" : "—"}
                     </td>
                     <td className="px-4 py-3">
                       {row.hasSpeechStats ? "Yes" : "—"}
