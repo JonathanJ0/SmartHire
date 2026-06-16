@@ -1,4 +1,4 @@
-# UmaMaj
+# SmartHire
 
 AI-powered interview practice platform with:
 - interviewee and interviewer web apps (`my-app`)
